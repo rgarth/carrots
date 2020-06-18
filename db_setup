@@ -1,0 +1,11 @@
+CREATE DATABASE carrots
+CREATE USER 'carrots'@'localhost' IDENTIFIED WITH MYSQL_NATIVE_PASSWORD BY 'password';
+GRANT ALL PRIVILEGES ON carrots.* TO 'carrots'@'localhost';
+USE carrots
+CREATE TABLE kudos_log (
+    id MEDIUMINT NOT NULL AUTO_INCREMENT,
+    timestamp DATETIME,
+    sender VARCHAR(20),
+    recipient VARCHAR(20),
+    PRIMARY KEY(id)
+);

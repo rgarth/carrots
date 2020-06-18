@@ -1,4 +1,8 @@
 {
     "Emoji": "carrot",
-    "Plural": "carrots"
+    "Plural": "carrots",
+    "DBHost": "127.0.0.1",
+    "DBPort": 3306,
+    "DBName": "carrots",
+    "DBUser": "carrots"
 }
