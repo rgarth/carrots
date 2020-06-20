@@ -29,6 +29,7 @@ type configuration struct {
 }
 
 type userStats struct {
+	id       string
 	sent     int
 	received int
 }
@@ -135,6 +136,60 @@ func getStats(configuration *configuration, user string) (userStats, error) {
 	return stats, nil
 }
 
+func getLeaderboard(configuration *configuration) ([]userStats, userStats, error) {
+	var topsender userStats
+	var leaderboard []userStats
+	dbConnectionString := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s",
+		configuration.DBUser,
+		configuration.DBPass,
+		configuration.DBHost,
+		configuration.DBPort,
+		configuration.DBName)
+	db, err := sql.Open("mysql", dbConnectionString)
+	if err != nil {
+		return nil, topsender, err
+	}
+	defer db.Close()
+
+	// Leaderboard query
+	queryStr := `select recipient,COUNT(DISTINCT(id)) from kudos_log WHERE
+timestamp >= LAST_DAY(CURRENT_DATE) + INTERVAL 1 DAY - INTERVAL 1 MONTH AND
+timestamp < LAST_DAY(CURRENT_DATE) + INTERVAL 1 DAY
+GROUP BY recipient
+ORDER BY COUNT(DISTINCT(id)) DESC LIMIT 10`
+	leaderboardQuery, err := db.Query(queryStr)
+	defer leaderboardQuery.Close()
+	if err != nil {
+		return nil, topsender, err
+	}
+	for leaderboardQuery.Next() {
+		var current userStats
+		leaderboardQuery.Scan(&current.id, &current.received)
+		if err != nil {
+			return nil, current, err
+		}
+		leaderboard = append(leaderboard, current)
+	}
+	// topsender query
+	queryStr = `select sender,COUNT(DISTINCT(id)) from kudos_log WHERE
+		timestamp >= LAST_DAY(CURRENT_DATE) + INTERVAL 1 DAY - INTERVAL 1 MONTH AND
+		timestamp < LAST_DAY(CURRENT_DATE) + INTERVAL 1 DAY
+		GROUP BY sender
+		ORDER BY COUNT(DISTINCT(id)) DESC LIMIT 1`
+	topsenderQuery, err := db.Query(queryStr)
+	defer topsenderQuery.Close()
+	if err != nil {
+		return nil, topsender, err
+	}
+	for topsenderQuery.Next() {
+		topsenderQuery.Scan(&topsender.id, &topsender.sent)
+		if err != nil {
+			return nil, topsender, err
+		}
+	}
+	return leaderboard, topsender, nil
+}
+
 func main() {
 	configuration := configuration{}
 
@@ -170,7 +225,7 @@ Loop:
 
 				carrotsMatch := regexp.MustCompile(fmt.Sprintf(":%s:", configuration.Emoji))
 				usersMatch := regexp.MustCompile("@([A-Za-z]+[A-Za-z0-9-_]+)")
-				cmdMatch := regexp.MustCompile(fmt.Sprintf(`^<@%s> (.+)$`, strings.ToLower(info.User.ID)))
+				cmdMatch := regexp.MustCompile(fmt.Sprintf(`^<@%s> *(.*)$`, strings.ToLower(info.User.ID)))
 
 				carrots := carrotsMatch.FindAllStringIndex(text, -1)
 				recipients := usersMatch.FindAllString(text, -1)
@@ -188,6 +243,9 @@ Loop:
 						err := storeKudos(&configuration, sender.ID, verified, len(carrots))
 						if err != nil {
 							println(err)
+							rtm.SendMessage(rtm.NewOutgoingMessage(
+								fmt.Sprintf("Thanks for sharing the :%s:, unfortunately I had a problem saving them", configuration.Emoji),
+								ev.Channel))
 						}
 
 						// Acknowledge the carrots
@@ -200,10 +258,10 @@ Loop:
 						rtm.SendMessage(rtm.NewOutgoingMessage(botResp, ev.Channel))
 					}
 
-				}
-				if atCmd != nil {
+				} else if atCmd != nil {
 					switch atCmd[len(atCmd)-1] {
 					case "me":
+						log.Println(fmt.Sprintf("Looking up stats for %s", sender.RealName))
 						stats, err := getStats(&configuration, sender.ID)
 						var respStr string
 						if err != nil {
@@ -217,7 +275,37 @@ Loop:
 						user := slack.MsgOptionAsUser(true)
 						rtm.PostEphemeral(ev.Channel, sender.ID, text, user)
 
-					case "help":
+					case "ladder":
+						log.Println("Looking up leaderboard")
+						leaderboard, topsender, err := getLeaderboard(&configuration)
+						var respStr string
+						if err != nil {
+							log.Println(err)
+							respStr = fmt.Sprintf("Sorry, I encountered a problem and couldn't look up the current leaderboard")
+						} else {
+							if len(leaderboard) > 0 {
+								_, monthStr, _ := time.Now().Date()
+								respStr = fmt.Sprintf("The current standings for %s:", monthStr)
+								for i, ranked := range leaderboard {
+									rankedUser, err := rtm.GetUserInfo(ranked.id)
+									if err != nil {
+										rankedUser.RealName = "Unknown"
+									}
+									respStr = respStr + fmt.Sprintf("\n> %d. *%s* received %d :%s:",
+										i+1, rankedUser.RealName, ranked.received, configuration.Emoji)
+								}
+								user, err := rtm.GetUserInfo(topsender.id)
+								if err == nil {
+									respStr = respStr + fmt.Sprintf("\n> \n> *%s* gave the most! %d :%s:",
+										user.RealName, topsender.sent, configuration.Emoji)
+								}
+							} else {
+								respStr = fmt.Sprintf("Curently no :%s: have been given :cry:", configuration.Emoji)
+							}
+						}
+						rtm.SendMessage(rtm.NewOutgoingMessage(respStr, ev.Channel))
+
+					default:
 						user := slack.MsgOptionAsUser(true)
 						text := slack.MsgOptionText(
 							fmt.Sprintf("Send :%s: to your peers:", configuration.Emoji)+
@@ -226,13 +314,12 @@ Loop:
 								fmt.Sprintf("\n>:%s: @paul @john", configuration.Emoji)+
 								fmt.Sprintf("\n>Thanks for you help today @george, have a :%s:", configuration.Emoji)+
 								fmt.Sprintf("\nOther stuff:")+
-								fmt.Sprintf("\n>`@%s me` Found out how many :%s: you have",
+								fmt.Sprintf("\n>`@%s me` Find out how many :%s: you have",
+									info.User.Name, configuration.Emoji)+
+								fmt.Sprintf("\n>`@%s ladder` Found out who has the most :%s:",
 									info.User.Name, configuration.Emoji),
-							//								fmt.Sprintf("\n>`@%s ladder` Found out who has the most :%s:",
-							//									info.User.Name, configuration.Emoji),
 							false)
 						rtm.PostEphemeral(ev.Channel, sender.ID, text, user)
-
 					}
 				}
 
