@@ -236,7 +236,7 @@ Loop:
 					verified, err := verifyRecipients(&configuration, rtm, ev, recipients)
 
 					if err != nil {
-						rtm.SendMessage(rtm.NewOutgoingMessage(fmt.Sprintf("@%s %s", info.User.ID, err.Error()), ev.Channel))
+						rtm.SendMessage(rtm.NewOutgoingMessage(err.Error(), ev.Channel))
 					} else {
 						//Genuine Kudos!
 						//save to db
@@ -288,11 +288,12 @@ Loop:
 								respStr = fmt.Sprintf("The current standings for %s:", monthStr)
 								for i, ranked := range leaderboard {
 									rankedUser, err := rtm.GetUserInfo(ranked.id)
-									if err != nil {
-										rankedUser.RealName = "Unknown"
+									realName := "Unkown"
+									if err == nil {
+										realName = rankedUser.RealName
 									}
 									respStr = respStr + fmt.Sprintf("\n> %d. *%s* received %d :%s:",
-										i+1, rankedUser.RealName, ranked.received, configuration.Emoji)
+										i+1, realName, ranked.received, configuration.Emoji)
 								}
 								user, err := rtm.GetUserInfo(topsender.id)
 								if err == nil {
