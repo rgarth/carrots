@@ -254,7 +254,7 @@ Loop:
 										configuration.Emoji, configuration.Plural),
 									ev.Channel))
 							}
-							if mystats.sent+(len(carrots)*len(verified)) >= configuration.Limit {
+							if mystats.sent+(len(carrots)*len(verified)) > configuration.Limit {
 								haveBudget = false
 							}
 						}
