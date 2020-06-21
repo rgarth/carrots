@@ -83,7 +83,7 @@ func storeKudos(configuration *configuration, sender string, recipients []string
 	insertRows := []string{}
 	for i := 0; i < count; i++ {
 		for _, recipient := range recipients {
-			insertRows = append(insertRows, fmt.Sprintf("\n(0, NOW(), \"%s\", \"%s\")", sender, recipient))
+			insertRows = append(insertRows, fmt.Sprintf("\n(0, UTC_TIMESTAMP(), \"%s\", \"%s\")", sender, recipient))
 		}
 	}
 	insertQuery := insertStr + strings.Join(insertRows, ",")
