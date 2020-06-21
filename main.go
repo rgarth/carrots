@@ -26,6 +26,7 @@ type configuration struct {
 	DBUser     string
 	DBPass     string
 	SlackToken string
+	Limit      int
 }
 
 type userStats struct {
@@ -105,32 +106,33 @@ func getStats(configuration *configuration, user string) (userStats, error) {
 		configuration.DBHost,
 		configuration.DBPort,
 		configuration.DBName)
-	db, err := sql.Open("mysql", dbConnectionString)
-	if err != nil {
-		return stats, err
+	db, dbErr := sql.Open("mysql", dbConnectionString)
+	if dbErr != nil {
+		return stats, dbErr
 	}
 	defer db.Close()
 	sent := fmt.Sprintf("select COUNT(sender) FROM kudos_log WHERE timestamp >= LAST_DAY(CURRENT_DATE) + INTERVAL 1 DAY - INTERVAL 1 MONTH   AND timestamp < LAST_DAY(CURRENT_DATE) + INTERVAL 1 DAY AND TRIM(sender) = \"%s\"", user)
-	rcvd := fmt.Sprintf("select COUNT(recipient) FROM kudos_log WHERE timestamp >= LAST_DAY(CURRENT_DATE) + INTERVAL 1 DAY - INTERVAL 1 MONTH   AND timestamp < LAST_DAY(CURRENT_DATE) + INTERVAL 1 DAY AND TRIM(recipient) = \"%s\"", user)
-	sentQuery, err := db.Query(sent)
-	defer sentQuery.Close()
-	if err != nil {
-		return stats, err
+	sentQuery, sentErr := db.Query(sent)
+	if sentErr != nil {
+		return stats, sentErr
 	}
+	defer sentQuery.Close()
 	for sentQuery.Next() {
-		err := sentQuery.Scan(&stats.sent)
-		if err != nil {
-			return stats, err
+		sentErr := sentQuery.Scan(&stats.sent)
+		if sentErr != nil {
+			return stats, sentErr
 		}
 	}
-	rcvQuery, err := db.Query(rcvd)
-	if err != nil {
-		return stats, err
+	rcvd := fmt.Sprintf("select COUNT(recipient) FROM kudos_log WHERE timestamp >= LAST_DAY(CURRENT_DATE) + INTERVAL 1 DAY - INTERVAL 1 MONTH   AND timestamp < LAST_DAY(CURRENT_DATE) + INTERVAL 1 DAY AND TRIM(recipient) = \"%s\"", user)
+	rcvQuery, rcvErr := db.Query(rcvd)
+	if rcvErr != nil {
+		return stats, rcvErr
 	}
+	defer rcvQuery.Close()
 	for rcvQuery.Next() {
-		err := rcvQuery.Scan(&stats.received)
-		if err != nil {
-			return stats, err
+		rcvErr := rcvQuery.Scan(&stats.received)
+		if rcvErr != nil {
+			return stats, rcvErr
 		}
 	}
 	return stats, nil
@@ -158,10 +160,10 @@ timestamp < LAST_DAY(CURRENT_DATE) + INTERVAL 1 DAY
 GROUP BY recipient
 ORDER BY COUNT(DISTINCT(id)) DESC LIMIT 10`
 	leaderboardQuery, err := db.Query(queryStr)
-	defer leaderboardQuery.Close()
 	if err != nil {
 		return nil, topsender, err
 	}
+	defer leaderboardQuery.Close()
 	for leaderboardQuery.Next() {
 		var current userStats
 		leaderboardQuery.Scan(&current.id, &current.received)
@@ -177,10 +179,10 @@ ORDER BY COUNT(DISTINCT(id)) DESC LIMIT 10`
 		GROUP BY sender
 		ORDER BY COUNT(DISTINCT(id)) DESC LIMIT 1`
 	topsenderQuery, err := db.Query(queryStr)
-	defer topsenderQuery.Close()
 	if err != nil {
 		return nil, topsender, err
 	}
+	defer topsenderQuery.Close()
 	for topsenderQuery.Next() {
 		topsenderQuery.Scan(&topsender.id, &topsender.sent)
 		if err != nil {
@@ -196,6 +198,7 @@ func main() {
 	// default emoji overwritten by config file
 	configuration.Emoji = "carrot"
 	configuration.Plural = "carrots"
+	configuration.Limit = -1 // default here is no monthly kudos limit
 
 	err := gonfig.GetConf("./carrots.json", &configuration)
 	if err != nil {
@@ -239,37 +242,64 @@ Loop:
 						rtm.SendMessage(rtm.NewOutgoingMessage(err.Error(), ev.Channel))
 					} else {
 						//Genuine Kudos!
-						//save to db
-						err := storeKudos(&configuration, sender.ID, verified, len(carrots))
-						if err != nil {
-							println(err)
+						//Check if we have the budget
+						haveBudget := true
+						var lookupError error = nil
+						if configuration.Limit != -1 {
+							var mystats userStats
+							mystats, lookupError = getStats(&configuration, sender.ID)
+							if lookupError != nil {
+								rtm.SendMessage(rtm.NewOutgoingMessage(
+									fmt.Sprintf("Thanks for sharing the :%s:, unfortunately I could not find my %s store",
+										configuration.Emoji, configuration.Plural),
+									ev.Channel))
+							}
+							if mystats.sent+(len(carrots)*len(verified)) >= configuration.Limit {
+								haveBudget = false
+							}
+						}
+						if haveBudget == true && lookupError == nil {
+							//save to db
+							err := storeKudos(&configuration, sender.ID, verified, len(carrots))
+							if err != nil {
+								rtm.SendMessage(rtm.NewOutgoingMessage(
+									fmt.Sprintf("Thanks for sharing the :%s:, unfortunately I had a problem saving them", configuration.Emoji),
+									ev.Channel))
+							} else {
+
+								// Acknowledge the carrots
+								var botResp string
+								log.Printf("%s sent %d %s to %d verified users\n", sender.Profile.RealName, len(carrots), configuration.Plural, len(verified))
+								for i := 0; i < (len(carrots) * len(verified)); i++ {
+									botResp = fmt.Sprintf("%s :%s:", botResp, configuration.Emoji)
+								}
+								botResp = fmt.Sprintf("%s :heart:", botResp)
+								rtm.SendMessage(rtm.NewOutgoingMessage(botResp, ev.Channel))
+							}
+						} else if lookupError == nil {
 							rtm.SendMessage(rtm.NewOutgoingMessage(
-								fmt.Sprintf("Thanks for sharing the :%s:, unfortunately I had a problem saving them", configuration.Emoji),
+								fmt.Sprintf("Thanks for sharing the :%s:, unfortunately you can't send more than %d in a month",
+									configuration.Emoji, configuration.Limit),
 								ev.Channel))
 						}
-
-						// Acknowledge the carrots
-						var botResp string
-						log.Printf("%s sent %d %s to %d verified users\n", sender.Profile.RealName, len(carrots), configuration.Plural, len(verified))
-						for i := 0; i < (len(carrots) * len(verified)); i++ {
-							botResp = fmt.Sprintf("%s :%s:", botResp, configuration.Emoji)
-						}
-						botResp = fmt.Sprintf("%s :heart:", botResp)
-						rtm.SendMessage(rtm.NewOutgoingMessage(botResp, ev.Channel))
 					}
 
 				} else if atCmd != nil {
 					switch atCmd[len(atCmd)-1] {
 					case "me":
+						var respStr string
 						log.Println(fmt.Sprintf("Looking up stats for %s", sender.RealName))
 						stats, err := getStats(&configuration, sender.ID)
-						var respStr string
 						if err != nil {
 							log.Println(err)
 							respStr = fmt.Sprintf("Sorry, I encountered a problem and couldn't look up your stats")
 						} else {
 							_, monthStr, _ := time.Now().Date()
 							respStr = fmt.Sprintf("Hey, so far in %s, you have given *%d* %s, and received *%d*", monthStr, stats.sent, configuration.Plural, stats.received)
+							if configuration.Limit != -1 {
+								respStr = respStr + fmt.Sprintf("\nYou can send a total of *%d* :%s: per month",
+									configuration.Limit, configuration.Emoji)
+							}
 						}
 						text := slack.MsgOptionText(respStr, false)
 						user := slack.MsgOptionAsUser(true)
@@ -308,18 +338,22 @@ Loop:
 
 					default:
 						user := slack.MsgOptionAsUser(true)
-						text := slack.MsgOptionText(
-							fmt.Sprintf("Send :%s: to your peers:", configuration.Emoji)+
-								fmt.Sprintf("\n>Hey @ringo have some :%s: :%s: for your hard work",
-									configuration.Emoji, configuration.Emoji)+
-								fmt.Sprintf("\n>:%s: @paul @john", configuration.Emoji)+
-								fmt.Sprintf("\n>Thanks for you help today @george, have a :%s:", configuration.Emoji)+
-								fmt.Sprintf("\nOther stuff:")+
-								fmt.Sprintf("\n>`@%s me` Find out how many :%s: you have",
-									info.User.Name, configuration.Emoji)+
-								fmt.Sprintf("\n>`@%s ladder` Found out who has the most :%s:",
-									info.User.Name, configuration.Emoji),
-							false)
+						helpStr := fmt.Sprintf("*Send :%s: to your peers:*", configuration.Emoji) +
+							fmt.Sprintf("\n>Hey @ringo have some :%s: :%s: for your hard work",
+								configuration.Emoji, configuration.Emoji) +
+							fmt.Sprintf("\n>:%s: @paul @john", configuration.Emoji) +
+							fmt.Sprintf("\n>Thanks for you help today @george, have a :%s:", configuration.Emoji) +
+							fmt.Sprintf("\n*Other stuff:*") +
+							fmt.Sprintf("\n>`@%s me` Find out how many :%s: you have",
+								info.User.Name, configuration.Emoji) +
+							fmt.Sprintf("\n>`@%s ladder` Find out who has the most :%s:",
+								info.User.Name, configuration.Emoji) +
+							fmt.Sprintf("\n>`@%s help` Print this message", info.User.Name)
+						if configuration.Limit != -1 {
+							helpStr = helpStr + fmt.Sprintf("\nYou can send a total of *%d* %s per month",
+								configuration.Limit, configuration.Plural)
+						}
+						text := slack.MsgOptionText(helpStr, false)
 						rtm.PostEphemeral(ev.Channel, sender.ID, text, user)
 					}
 				}

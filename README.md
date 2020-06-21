@@ -21,3 +21,11 @@ Golang KudosBot for Slack
     ```
 
 * Invite the bot to your channel
+
+## Configuration
+
+All config options are in `carrots.json`. "Limits", is the number of emoji a user can send in a calendar month, `-1` removes the limit
+
+## Usage
+
+Once your bot has joined a channel, `@botnam help`
