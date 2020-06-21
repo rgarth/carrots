@@ -28,4 +28,18 @@ All config options are in `carrots.json`. "Limits", is the number of emoji a use
 
 ## Usage
 
-Once your bot has joined a channel, `@botnam help`
+### Commands
+
+> `@kudos help` Get help, only visible to the message sender  
+> `@kudos ladder` Print the monthly leaderboard  
+> `@kudos me` Print your personal monthly stats, only visible to the message sender  
+
+### Sending Kudos
+
+```
+@<person> <emoji>
+or
+<emoji> @<person1> @<person2>
+or
+Some <emoji> <emoji> are due to @<person> for being awesome
+```
