@@ -9,15 +9,16 @@ Golang KudosBot for Slack
 * Update the carrots.json file
 * Build the app
 
-    ```
-    go get
-    go build
+    ```sh
+    go get github.com/rgarth/carrots
+    go build github.com/rgarth/carrots
+    cp $GOPATH/src/github.com/rgarth/carrots/carrots.json ./
     ```
 
 * Run the app
 
-    ```
-    SLACKTOKEN=xoxb-... MYSQLPASS=... ./carrots
+    ```sh
+    SLACKTOKEN=[SLACK-TOKEN] MYSQLPASS=[DB-PASSWORD] ./carrots
     ```
 
 * Invite the bot to your channel
