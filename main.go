@@ -84,7 +84,7 @@ func storeKudos(configuration *configuration, sender string, recipients []string
 	insertRows := []string{}
 	for i := 0; i < count; i++ {
 		for _, recipient := range recipients {
-			insertRows = append(insertRows, fmt.Sprintf("\n(0, UTC_TIMESTAMP(), \"%s\", \"%s\")", sender, recipient))
+			insertRows = append(insertRows, fmt.Sprintf("\n(0, NOW(), \"%s\", \"%s\")", sender, recipient))
 		}
 	}
 	insertQuery := insertStr + strings.Join(insertRows, ",")
@@ -338,7 +338,7 @@ Loop:
 
 					default:
 						user := slack.MsgOptionAsUser(true)
-						helpStr := fmt.Sprintf("*Send :%s: to your peers:*", configuration.Emoji) +
+						helpStr := fmt.Sprintf("*Send %s to your peers:*", configuration.Plural) +
 							fmt.Sprintf("\n>Hey @ringo have some :%s: :%s: for your hard work",
 								configuration.Emoji, configuration.Emoji) +
 							fmt.Sprintf("\n>:%s: @paul @john", configuration.Emoji) +
