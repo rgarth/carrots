@@ -32,7 +32,7 @@ All config options are in `carrots.json`. "Limits", is the number of emoji a use
 ### Commands
 
 > `@kudos help` Get help, only visible to the message sender  
-> `@kudos ladder` Print the monthly leaderboard  
+> `@kudos ladder [month]` Print the monthly leaderboar, you can optionally specify a month name  
 > `@kudos me` Print your personal monthly stats, only visible to the message sender  
 
 ### Sending Kudos

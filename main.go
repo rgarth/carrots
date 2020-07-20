@@ -360,7 +360,7 @@ Loop:
 							fmt.Sprintf("\n*Other stuff:*") +
 							fmt.Sprintf("\n>`@%s me` Find out how many :%s: you have",
 								info.User.Name, configuration.Emoji) +
-							fmt.Sprintf("\n>`@%s ladder` Find out who has the most :%s:",
+							fmt.Sprintf("\n>`@%s ladder [month]` Find out who has the most :%s:",
 								info.User.Name, configuration.Emoji) +
 							fmt.Sprintf("\n>`@%s help` Print this message", info.User.Name)
 						if configuration.Limit != -1 {
