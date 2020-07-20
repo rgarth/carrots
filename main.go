@@ -67,6 +67,20 @@ func verifyRecipients(configuration *configuration, rtm *slack.RTM, ev *slack.Me
 	return verified, nil
 }
 
+func verifyMonth(monthStr string) string {
+	monthStr = strings.ToLower(monthStr)
+	monthSlice := []string{
+		"january", "february", "march", "april", "may", "june",
+		"july", "august", "september", "october", "november", "december",
+	}
+	for _, s := range monthSlice {
+		if monthStr == s {
+			return monthStr
+		}
+	}
+	return strings.ToLower(time.Now().Month().String())
+}
+
 func storeKudos(configuration *configuration, sender string, recipients []string, count int) error {
 	dbConnectionString := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s",
 		configuration.DBUser,
@@ -98,7 +112,7 @@ func storeKudos(configuration *configuration, sender string, recipients []string
 	return nil
 }
 
-func getStats(configuration *configuration, user string) (userStats, error) {
+func getStats(configuration *configuration, user string, monthStr string) (userStats, error) {
 	var stats userStats
 	dbConnectionString := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s",
 		configuration.DBUser,
@@ -111,7 +125,9 @@ func getStats(configuration *configuration, user string) (userStats, error) {
 		return stats, dbErr
 	}
 	defer db.Close()
-	sent := fmt.Sprintf("select COUNT(sender) FROM kudos_log WHERE timestamp >= LAST_DAY(CURRENT_DATE) + INTERVAL 1 DAY - INTERVAL 1 MONTH   AND timestamp < LAST_DAY(CURRENT_DATE) + INTERVAL 1 DAY AND TRIM(sender) = \"%s\"", user)
+	sent := `select COUNT(sender) FROM kudos_log WHERE MONTHNAME(timestamp) = "` + monthStr +
+		`" AND timestamp > DATE_SUB(DATE_FORMAT(NOW(), '%Y-%m-01'), INTERVAL 11 MONTH)` +
+		` AND TRIM(sender) = "` + user + `"`
 	sentQuery, sentErr := db.Query(sent)
 	if sentErr != nil {
 		return stats, sentErr
@@ -123,7 +139,9 @@ func getStats(configuration *configuration, user string) (userStats, error) {
 			return stats, sentErr
 		}
 	}
-	rcvd := fmt.Sprintf("select COUNT(recipient) FROM kudos_log WHERE timestamp >= LAST_DAY(CURRENT_DATE) + INTERVAL 1 DAY - INTERVAL 1 MONTH   AND timestamp < LAST_DAY(CURRENT_DATE) + INTERVAL 1 DAY AND TRIM(recipient) = \"%s\"", user)
+	rcvd := `select COUNT(recipient) FROM kudos_log WHERE MONTHNAME(timestamp) = "` + monthStr +
+		`" AND timestamp > DATE_SUB(DATE_FORMAT(NOW(), '%Y-%m-01'), INTERVAL 11 MONTH)` +
+		` AND TRIM(sender) = "` + user + `"`
 	rcvQuery, rcvErr := db.Query(rcvd)
 	if rcvErr != nil {
 		return stats, rcvErr
@@ -138,7 +156,7 @@ func getStats(configuration *configuration, user string) (userStats, error) {
 	return stats, nil
 }
 
-func getLeaderboard(configuration *configuration) ([]userStats, userStats, error) {
+func getLeaderboard(configuration *configuration, monthStr string) ([]userStats, userStats, error) {
 	var topsender userStats
 	var leaderboard []userStats
 	dbConnectionString := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s",
@@ -154,11 +172,9 @@ func getLeaderboard(configuration *configuration) ([]userStats, userStats, error
 	defer db.Close()
 
 	// Leaderboard query
-	queryStr := `select recipient,COUNT(DISTINCT(id)) from kudos_log WHERE
-timestamp >= LAST_DAY(CURRENT_DATE) + INTERVAL 1 DAY - INTERVAL 1 MONTH AND
-timestamp < LAST_DAY(CURRENT_DATE) + INTERVAL 1 DAY
-GROUP BY recipient
-ORDER BY COUNT(DISTINCT(id)) DESC LIMIT 10`
+	queryStr := `select recipient,COUNT(DISTINCT(id)) from kudos_log WHERE MONTHNAME(timestamp) = '` + monthStr +
+		`' AND timestamp > DATE_SUB(DATE_FORMAT(NOW(), '%Y-%m-01'), INTERVAL 11 MONTH)` +
+		` GROUP BY recipient ORDER BY COUNT(DISTINCT(id)) DESC LIMIT 10`
 	leaderboardQuery, err := db.Query(queryStr)
 	if err != nil {
 		return nil, topsender, err
@@ -173,11 +189,9 @@ ORDER BY COUNT(DISTINCT(id)) DESC LIMIT 10`
 		leaderboard = append(leaderboard, current)
 	}
 	// topsender query
-	queryStr = `select sender,COUNT(DISTINCT(id)) from kudos_log WHERE
-		timestamp >= LAST_DAY(CURRENT_DATE) + INTERVAL 1 DAY - INTERVAL 1 MONTH AND
-		timestamp < LAST_DAY(CURRENT_DATE) + INTERVAL 1 DAY
-		GROUP BY sender
-		ORDER BY COUNT(DISTINCT(id)) DESC LIMIT 1`
+	queryStr = `select sender,COUNT(DISTINCT(id)) from kudos_log WHERE MONTHNAME(timestamp) = '` + monthStr +
+		`' AND timestamp > DATE_SUB(DATE_FORMAT(NOW(), '%Y-%m-01'),  INTERVAL 11 MONTH)` +
+		` GROUP BY sender ORDER BY COUNT(DISTINCT(id)) DESC LIMIT 1`
 	topsenderQuery, err := db.Query(queryStr)
 	if err != nil {
 		return nil, topsender, err
@@ -247,7 +261,7 @@ Loop:
 						var lookupError error = nil
 						if configuration.Limit != -1 {
 							var mystats userStats
-							mystats, lookupError = getStats(&configuration, sender.ID)
+							mystats, lookupError = getStats(&configuration, sender.ID, time.Now().Month().String())
 							if lookupError != nil {
 								rtm.SendMessage(rtm.NewOutgoingMessage(
 									fmt.Sprintf("Thanks for sharing the :%s:, unfortunately I could not find my %s store",
@@ -285,11 +299,13 @@ Loop:
 					}
 
 				} else if atCmd != nil {
-					switch atCmd[len(atCmd)-1] {
-					case "me":
+					cmdStr := atCmd[len(atCmd)-1]
+					ladderMatch := regexp.MustCompile(`^ladder *([A-Za-z]*)$`)
+					ladderCmd := ladderMatch.FindStringSubmatch(cmdStr)
+					if cmdStr == "me" {
 						var respStr string
 						log.Println(fmt.Sprintf("Looking up stats for %s", sender.RealName))
-						stats, err := getStats(&configuration, sender.ID)
+						stats, err := getStats(&configuration, sender.ID, time.Now().Month().String())
 						if err != nil {
 							log.Println(err)
 							respStr = fmt.Sprintf("Sorry, I encountered a problem and couldn't look up your stats")
@@ -304,18 +320,17 @@ Loop:
 						text := slack.MsgOptionText(respStr, false)
 						user := slack.MsgOptionAsUser(true)
 						rtm.PostEphemeral(ev.Channel, sender.ID, text, user)
-
-					case "ladder":
-						log.Println("Looking up leaderboard")
-						leaderboard, topsender, err := getLeaderboard(&configuration)
+					} else if ladderCmd != nil {
+						monthStr := verifyMonth(ladderCmd[len(ladderCmd)-1])
+						log.Printf("Looking up leaderboard for %s", strings.Title(monthStr))
+						leaderboard, topsender, err := getLeaderboard(&configuration, monthStr)
 						var respStr string
 						if err != nil {
 							log.Println(err)
 							respStr = fmt.Sprintf("Sorry, I encountered a problem and couldn't look up the current leaderboard")
 						} else {
 							if len(leaderboard) > 0 {
-								_, monthStr, _ := time.Now().Date()
-								respStr = fmt.Sprintf("The current standings for %s:", monthStr)
+								respStr = fmt.Sprintf("The standings for %s:", strings.Title(monthStr))
 								for i, ranked := range leaderboard {
 									rankedUser, err := rtm.GetUserInfo(ranked.id)
 									realName := "Unkown"
@@ -331,12 +346,11 @@ Loop:
 										user.RealName, topsender.sent, configuration.Emoji)
 								}
 							} else {
-								respStr = fmt.Sprintf("Curently no :%s: have been given :cry:", configuration.Emoji)
+								respStr = fmt.Sprintf("In %s, no :%s: were given :cry:", strings.Title(monthStr), configuration.Emoji)
 							}
 						}
 						rtm.SendMessage(rtm.NewOutgoingMessage(respStr, ev.Channel))
-
-					default:
+					} else {
 						user := slack.MsgOptionAsUser(true)
 						helpStr := fmt.Sprintf("*Send %s to your peers:*", configuration.Plural) +
 							fmt.Sprintf("\n>Hey @ringo have some :%s: :%s: for your hard work",
