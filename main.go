@@ -288,7 +288,10 @@ Loop:
 									botResp = fmt.Sprintf("%s :%s:", botResp, configuration.Emoji)
 								}
 								botResp = fmt.Sprintf("%s :heart:", botResp)
-								rtm.SendMessage(rtm.NewOutgoingMessage(botResp, ev.Channel))
+								text := slack.MsgOptionText(botResp, false)
+								user := slack.MsgOptionAsUser(true)
+								rtm.PostEphemeral(ev.Channel, sender.ID, text, user)
+								rtm.AddReaction("heart", slack.ItemRef{ev.Channel, ev.Timestamp, "", ""})
 							}
 						} else if lookupError == nil {
 							rtm.SendMessage(rtm.NewOutgoingMessage(
