@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"regexp"
 	"strings"
@@ -18,15 +19,19 @@ import (
 
 // Configuration values that can be set
 type configuration struct {
-	Emoji      string
-	Plural     string
-	DBHost     string
-	DBPort     int
-	DBName     string
-	DBUser     string
-	DBPass     string
-	SlackToken string
-	Limit      int
+	Emoji         string
+	Plural        string
+	DBHost        string
+	DBPort        int
+	DBName        string
+	DBUser        string
+	DBPass        string
+	SlackToken    string
+	Limit         int
+	PerUserLimit  int
+	KudosResponse []string
+	HelpResponse  []string
+	SelfResponse  []string
 }
 
 type userStats struct {
@@ -43,7 +48,7 @@ func getenv(name string) string {
 	return v
 }
 
-func verifyRecipients(configuration *configuration, rtm *slack.RTM, ev *slack.MessageEvent, recipients []string) ([]string, error) {
+func verifyRecipients(configuration *configuration, rtm *slack.RTM, ev *slack.MessageEvent, recipients []string, botUserID string) ([]string, error) {
 	// Check is recipients re valid
 	var verified []string
 	for _, s := range recipients {
@@ -52,13 +57,20 @@ func verifyRecipients(configuration *configuration, rtm *slack.RTM, ev *slack.Me
 
 		// Can't give yourself points
 		if recipient == ev.User {
-			return nil, errors.New("no patting yourself on the back")
+			if len(configuration.SelfResponse) > 0 {
+				return nil, errors.New(configuration.SelfResponse[rand.Intn(len(configuration.SelfResponse))])
+			}
+			return nil, errors.New("No patting yourself on the back")
+		}
+		// DO NOT FEED THE DONKEY
+		if recipient == botUserID {
+			return nil, errors.New("PLEASE DO NOT FEED THE DONKEY")
 		}
 		// Can only thank real people. Not rubber ducks.
 		_, err := rtm.GetUserInfo(recipient)
 
 		if err != nil {
-			errResp := fmt.Sprintf("can't find %s to give them any %s", s, configuration.Plural)
+			errResp := fmt.Sprintf("Who?")
 			return nil, errors.New(errResp)
 		}
 
@@ -98,7 +110,9 @@ func storeKudos(configuration *configuration, sender string, recipients []string
 	insertRows := []string{}
 	for i := 0; i < count; i++ {
 		for _, recipient := range recipients {
-			insertRows = append(insertRows, fmt.Sprintf("\n(0, NOW(), \"%s\", \"%s\")", sender, recipient))
+			row := `
+(0, NOW(), '` + sender + `', '` + recipient + `')`
+			insertRows = append(insertRows, row)
 		}
 	}
 	insertQuery := insertStr + strings.Join(insertRows, ",")
@@ -125,9 +139,9 @@ func getStats(configuration *configuration, user string, monthStr string) (userS
 		return stats, dbErr
 	}
 	defer db.Close()
-	sent := `select COUNT(sender) FROM kudos_log WHERE MONTHNAME(timestamp) = "` + monthStr +
-		`" AND timestamp > DATE_SUB(DATE_FORMAT(NOW(), '%Y-%m-01'), INTERVAL 11 MONTH)` +
-		` AND TRIM(sender) = "` + user + `"`
+	sent := `select COUNT(sender) FROM kudos_log WHERE MONTHNAME(timestamp) = '` + monthStr +
+		`' AND timestamp > DATE_SUB(DATE_FORMAT(NOW(), '%%Y-%%m-01'), INTERVAL 11 MONTH)` +
+		` AND TRIM(sender) = '` + user + `'`
 	sentQuery, sentErr := db.Query(sent)
 	if sentErr != nil {
 		return stats, sentErr
@@ -139,9 +153,9 @@ func getStats(configuration *configuration, user string, monthStr string) (userS
 			return stats, sentErr
 		}
 	}
-	rcvd := `select COUNT(recipient) FROM kudos_log WHERE MONTHNAME(timestamp) = "` + monthStr +
-		`" AND timestamp > DATE_SUB(DATE_FORMAT(NOW(), '%Y-%m-01'), INTERVAL 11 MONTH)` +
-		` AND TRIM(sender) = "` + user + `"`
+	rcvd := `select COUNT(recipient) FROM kudos_log WHERE MONTHNAME(timestamp) = '` + monthStr +
+		`' AND timestamp > DATE_SUB(DATE_FORMAT(NOW(), '%%Y-%%m-01'), INTERVAL 11 MONTH)` +
+		` AND TRIM(recipient) = '` + user + `'`
 	rcvQuery, rcvErr := db.Query(rcvd)
 	if rcvErr != nil {
 		return stats, rcvErr
@@ -173,7 +187,7 @@ func getLeaderboard(configuration *configuration, monthStr string) ([]userStats,
 
 	// Leaderboard query
 	queryStr := `select recipient,COUNT(DISTINCT(id)) from kudos_log WHERE MONTHNAME(timestamp) = '` + monthStr +
-		`' AND timestamp > DATE_SUB(DATE_FORMAT(NOW(), '%Y-%m-01'), INTERVAL 11 MONTH)` +
+		`' AND timestamp > DATE_SUB(DATE_FORMAT(NOW(), '%%Y-%%m-01'), INTERVAL 11 MONTH)` +
 		` GROUP BY recipient ORDER BY COUNT(DISTINCT(id)) DESC LIMIT 10`
 	leaderboardQuery, err := db.Query(queryStr)
 	if err != nil {
@@ -190,7 +204,7 @@ func getLeaderboard(configuration *configuration, monthStr string) ([]userStats,
 	}
 	// topsender query
 	queryStr = `select sender,COUNT(DISTINCT(id)) from kudos_log WHERE MONTHNAME(timestamp) = '` + monthStr +
-		`' AND timestamp > DATE_SUB(DATE_FORMAT(NOW(), '%Y-%m-01'),  INTERVAL 11 MONTH)` +
+		`' AND timestamp > DATE_SUB(DATE_FORMAT(NOW(), '%%Y-%%m-01'),  INTERVAL 11 MONTH)` +
 		` GROUP BY sender ORDER BY COUNT(DISTINCT(id)) DESC LIMIT 1`
 	topsenderQuery, err := db.Query(queryStr)
 	if err != nil {
@@ -212,8 +226,8 @@ func main() {
 	// default emoji overwritten by config file
 	configuration.Emoji = "carrot"
 	configuration.Plural = "carrots"
-	configuration.Limit = -1 // default here is no monthly kudos limit
-
+	configuration.Limit = -1        // default here is no monthly kudos limit
+	configuration.PerUserLimit = -1 // default is no limit to per user in action
 	err := gonfig.GetConf("./carrots.json", &configuration)
 	if err != nil {
 		panic(err)
@@ -250,7 +264,8 @@ Loop:
 
 				if ev.User != info.User.ID && len(carrots) > 0 && len(recipients) > 0 {
 					// verify recipients are valid
-					verified, err := verifyRecipients(&configuration, rtm, ev, recipients)
+					strings.ToLower(info.User.ID)
+					verified, err := verifyRecipients(&configuration, rtm, ev, recipients, info.User.ID)
 
 					if err != nil {
 						rtm.SendMessage(rtm.NewOutgoingMessage(err.Error(), ev.Channel))
@@ -272,6 +287,11 @@ Loop:
 								haveBudget = false
 							}
 						}
+						if configuration.PerUserLimit != -1 {
+							if len(carrots) > configuration.PerUserLimit {
+								haveBudget = false
+							}
+						}
 						if haveBudget == true && lookupError == nil {
 							//save to db
 							err := storeKudos(&configuration, sender.ID, verified, len(carrots))
@@ -284,6 +304,9 @@ Loop:
 								// Acknowledge the carrots
 								var botResp string
 								log.Printf("%s sent %d %s to %d verified users\n", sender.Profile.RealName, len(carrots), configuration.Plural, len(verified))
+								if len(configuration.KudosResponse) > 0 {
+									botResp = configuration.KudosResponse[rand.Intn(len(configuration.KudosResponse))]
+								}
 								for i := 0; i < (len(carrots) * len(verified)); i++ {
 									botResp = fmt.Sprintf("%s :%s:", botResp, configuration.Emoji)
 								}
@@ -294,11 +317,19 @@ Loop:
 								rtm.AddReaction("heart", slack.ItemRef{ev.Channel, ev.Timestamp, "", ""})
 							}
 						} else if lookupError == nil {
-							rtm.SendMessage(rtm.NewOutgoingMessage(
-								fmt.Sprintf("Thanks for sharing the :%s:, unfortunately you can't send more than %d in a month",
-									configuration.Emoji, configuration.Limit),
-								ev.Channel))
+							if len(carrots) > configuration.PerUserLimit {
+								rtm.SendMessage(rtm.NewOutgoingMessage(
+									fmt.Sprintf("Thanks for sharing the :%s:, unfortunately you can't send more than %d in a message",
+										configuration.Emoji, configuration.PerUserLimit),
+									ev.Channel))
+							} else {
+								rtm.SendMessage(rtm.NewOutgoingMessage(
+									fmt.Sprintf("Thanks for sharing the :%s:, unfortunately you can't send more than %d in a month",
+										configuration.Emoji, configuration.Limit),
+									ev.Channel))
+							}
 						}
+
 					}
 
 				} else if atCmd != nil {
@@ -313,8 +344,7 @@ Loop:
 							log.Println(err)
 							respStr = fmt.Sprintf("Sorry, I encountered a problem and couldn't look up your stats")
 						} else {
-							_, monthStr, _ := time.Now().Date()
-							respStr = fmt.Sprintf("Hey, so far in %s, you have given *%d* %s, and received *%d*", monthStr, stats.sent, configuration.Plural, stats.received)
+							respStr = fmt.Sprintf("Hey, so far in %s, you have given *%d* %s, and received *%d*", time.Now().Month().String(), stats.sent, configuration.Plural, stats.received)
 							if configuration.Limit != -1 {
 								respStr = respStr + fmt.Sprintf("\nYou can send a total of *%d* :%s: per month",
 									configuration.Limit, configuration.Emoji)
@@ -323,6 +353,7 @@ Loop:
 						text := slack.MsgOptionText(respStr, false)
 						user := slack.MsgOptionAsUser(true)
 						rtm.PostEphemeral(ev.Channel, sender.ID, text, user)
+
 					} else if ladderCmd != nil {
 						monthStr := verifyMonth(ladderCmd[len(ladderCmd)-1])
 						log.Printf("Looking up leaderboard for %s", strings.Title(monthStr))
@@ -353,13 +384,15 @@ Loop:
 							}
 						}
 						rtm.SendMessage(rtm.NewOutgoingMessage(respStr, ev.Channel))
+
 					} else {
 						user := slack.MsgOptionAsUser(true)
-						helpStr := fmt.Sprintf("*Send %s to your peers:*", configuration.Plural) +
-							fmt.Sprintf("\n>Hey @ringo have some :%s: :%s: for your hard work",
+						helpStr := fmt.Sprintf("*Send %s to your friends:*", configuration.Plural) +
+							fmt.Sprintf("\n>Hey @shrek, I like you, have a :%s:",
+								configuration.Emoji) +
+							fmt.Sprintf("\n>:%s: @shrek @fiona", configuration.Emoji) +
+							fmt.Sprintf("\n>I like that @boulder, it's a nice boulder :%s: :%s:",
 								configuration.Emoji, configuration.Emoji) +
-							fmt.Sprintf("\n>:%s: @paul @john", configuration.Emoji) +
-							fmt.Sprintf("\n>Thanks for you help today @george, have a :%s:", configuration.Emoji) +
 							fmt.Sprintf("\n*Other stuff:*") +
 							fmt.Sprintf("\n>`@%s me` Find out how many :%s: you have",
 								info.User.Name, configuration.Emoji) +
@@ -369,6 +402,10 @@ Loop:
 						if configuration.Limit != -1 {
 							helpStr = helpStr + fmt.Sprintf("\nYou can send a total of *%d* %s per month",
 								configuration.Limit, configuration.Plural)
+						}
+						if len(configuration.HelpResponse) > 0 {
+							helpStr = helpStr + fmt.Sprintf("\n%s",
+								configuration.HelpResponse[rand.Intn(len(configuration.HelpResponse))])
 						}
 						text := slack.MsgOptionText(helpStr, false)
 						rtm.PostEphemeral(ev.Channel, sender.ID, text, user)

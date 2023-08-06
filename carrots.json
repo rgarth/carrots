@@ -1,9 +1,24 @@
 {
     "Emoji": "carrot",
     "Plural": "carrots",
-    "DBHost": "127.0.0.1",
-    "DBPort": 3306,
+    "DBHost": "",
+    "DBPort": ,
     "DBName": "carrots",
     "DBUser": "carrots",
-    "Limit": 30
+    "Limit": 30,
+    "PerUserLimit": 3,
+    "KudosResponse": [
+        "I like that carrot, that's a nice carrot.",
+        "All right, all right, that's enough. No one likes a kiss-ass.",
+        "Wow! Only a TRUE friend would be that honest",
+        "Oh, that's beautiful. I didn't know you wrote poetry"
+    ],
+    "SelfResponse": [
+        "Oh, this is one of those onion things, isn't it?",
+        "No patting yourself on the back, kiss-ass.",
+        "You know, with you it's always, \"Me, me, me!\""
+    ],
+    "HelpResponse": [
+        "We can stay up late, swapping stories, and in the morning, I'm making waffles!"
+    ]
 }
