@@ -140,7 +140,7 @@ func getStats(configuration *configuration, user string, monthStr string) (userS
 	}
 	defer db.Close()
 	sent := `select COUNT(sender) FROM kudos_log WHERE MONTHNAME(timestamp) = '` + monthStr +
-		`' AND timestamp > DATE_SUB(DATE_FORMAT(NOW(), '%%Y-%%m-01'), INTERVAL 11 MONTH)` +
+		`' AND timestamp > DATE_SUB(DATE_FORMAT(NOW(), '%Y-%m-01'), INTERVAL 11 MONTH)` +
 		` AND TRIM(sender) = '` + user + `'`
 	sentQuery, sentErr := db.Query(sent)
 	if sentErr != nil {
@@ -154,7 +154,7 @@ func getStats(configuration *configuration, user string, monthStr string) (userS
 		}
 	}
 	rcvd := `select COUNT(recipient) FROM kudos_log WHERE MONTHNAME(timestamp) = '` + monthStr +
-		`' AND timestamp > DATE_SUB(DATE_FORMAT(NOW(), '%%Y-%%m-01'), INTERVAL 11 MONTH)` +
+		`' AND timestamp > DATE_SUB(DATE_FORMAT(NOW(), '%Y-%m-01'), INTERVAL 11 MONTH)` +
 		` AND TRIM(recipient) = '` + user + `'`
 	rcvQuery, rcvErr := db.Query(rcvd)
 	if rcvErr != nil {
@@ -187,7 +187,7 @@ func getLeaderboard(configuration *configuration, monthStr string) ([]userStats,
 
 	// Leaderboard query
 	queryStr := `select recipient,COUNT(DISTINCT(id)) from kudos_log WHERE MONTHNAME(timestamp) = '` + monthStr +
-		`' AND timestamp > DATE_SUB(DATE_FORMAT(NOW(), '%%Y-%%m-01'), INTERVAL 11 MONTH)` +
+		`' AND timestamp > DATE_SUB(DATE_FORMAT(NOW(), '%Y-%m-01'), INTERVAL 11 MONTH)` +
 		` GROUP BY recipient ORDER BY COUNT(DISTINCT(id)) DESC LIMIT 10`
 	leaderboardQuery, err := db.Query(queryStr)
 	if err != nil {
@@ -204,7 +204,7 @@ func getLeaderboard(configuration *configuration, monthStr string) ([]userStats,
 	}
 	// topsender query
 	queryStr = `select sender,COUNT(DISTINCT(id)) from kudos_log WHERE MONTHNAME(timestamp) = '` + monthStr +
-		`' AND timestamp > DATE_SUB(DATE_FORMAT(NOW(), '%%Y-%%m-01'),  INTERVAL 11 MONTH)` +
+		`' AND timestamp > DATE_SUB(DATE_FORMAT(NOW(), '%Y-%m-01'),  INTERVAL 11 MONTH)` +
 		` GROUP BY sender ORDER BY COUNT(DISTINCT(id)) DESC LIMIT 1`
 	topsenderQuery, err := db.Query(queryStr)
 	if err != nil {
